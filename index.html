@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rotisserie Draft List</title>
+<style>
+  :root { --bg:#fbfaf7; --fg:#1d1c1a; --muted:#6b675f; --line:#e4e0d8; --accent:#8a3b12; --row:#f3f0ea; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#151412; --fg:#ece8e1; --muted:#9a958b; --line:#2c2a26; --accent:#e08a56; --row:#1d1c19; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.4 system-ui, sans-serif; }
+  main { max-width: 900px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { margin:0 0 4px; font-size:1.6rem; }
+  p.sub { margin:0 0 16px; color:var(--muted); }
+  .controls { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+  input, select { font:inherit; padding:6px 10px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--fg); }
+  input { flex:1; min-width:180px; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); }
+  th { color:var(--muted); font-weight:600; font-size:.85rem; position:sticky; top:0; background:var(--bg); }
+  td.n { text-align:right; font-variant-numeric:tabular-nums; }
+  tr:hover td { background:var(--row); }
+  a { color:var(--accent); text-decoration:none; }
+  .r { font-size:.8rem; color:var(--muted); text-transform:capitalize; }
+  .hide-sm { }
+  @media (max-width: 560px) { .hide-sm { display:none; } }
+  #preview { position:fixed; pointer-events:none; width:220px; border-radius:10px; display:none; box-shadow:0 6px 24px #0006; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Rotisserie Draft List</h1>
+  <p class="sub" id="sub">Loading…</p>
+  <div class="controls">
+    <input id="q" type="search" placeholder="Search cards" aria-label="Search cards">
+    <select id="set" aria-label="Set"><option value="">All sets</option></select>
+  </div>
+  <table>
+    <thead><tr><th>#</th><th>Card</th><th>Set</th><th class="hide-sm">Type</th><th class="n">Decks</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+</main>
+<img id="preview" alt="">
+<script>
+const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+fetch('data/ranked.json').then(r => r.json()).then(({ total, updated, cards }) => {
+  cards.forEach((c, i) => c.rank = i + 1);
+  document.getElementById('sub').textContent =
+    `${cards.length} cards ranked by MTGTop8 non-Commander constructed decks (main or side) out of ${total.toLocaleString()}. Updated ${updated}.`;
+  const setSel = document.getElementById('set');
+  [...new Set(cards.map(c => c.set))].sort().forEach(s => setSel.add(new Option(s, s)));
+  const q = document.getElementById('q'), tbody = document.getElementById('rows');
+  const render = () => {
+    const term = q.value.toLowerCase(), set = setSel.value;
+    tbody.innerHTML = cards
+      .filter(c => (!set || c.set === set) && c.name.toLowerCase().includes(term))
+      .map(c => `<tr><td class="n">${c.rank}</td><td><a href="${c.url}" data-img="${c.img}">${esc(c.name)}</a> <span class="r">${c.rarity}</span></td><td>${c.set}</td><td class="hide-sm">${esc(c.type)}</td><td class="n">${c.decks == null ? '?' : c.decks.toLocaleString()}</td></tr>`)
+      .join('');
+  };
+  q.oninput = setSel.onchange = render;
+  render();
+});
+const pv = document.getElementById('preview');
+document.addEventListener('mouseover', e => { const a = e.target.closest('a[data-img]'); if (a && a.dataset.img) { pv.src = a.dataset.img; pv.style.display = 'block'; } });
+document.addEventListener('mouseout', e => { if (e.target.closest('a[data-img]')) pv.style.display = 'none'; });
+document.addEventListener('mousemove', e => { pv.style.left = Math.min(e.clientX + 16, innerWidth - 236) + 'px'; pv.style.top = Math.min(e.clientY + 16, innerHeight - 320) + 'px'; });
+</script>
+</body>
+</html>
