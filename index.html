@@ -15,6 +15,10 @@
   .controls { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
   input, select { font:inherit; padding:6px 10px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--fg); }
   input { flex:1; min-width:180px; }
+  .formats { display:flex; flex-wrap:wrap; gap:4px 14px; border:1px solid var(--line); border-radius:6px; margin:0 0 12px; padding:8px 12px; font-size:.9rem; }
+  #qstatus:empty { display:none; }
+  .formats legend { color:var(--muted); font-size:.8rem; padding:0 4px; }
+  .formats label { white-space:nowrap; cursor:pointer; }
   table { width:100%; border-collapse:collapse; }
   th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); }
   th { color:var(--muted); font-weight:600; font-size:.85rem; position:sticky; top:0; background:var(--bg); }
@@ -38,10 +42,12 @@
   <h1>Rotisserie Draft List</h1>
   <p class="sub" id="sub">Loading…</p>
   <div class="controls">
-    <input id="q" type="search" placeholder="Search cards" aria-label="Search cards">
+    <input id="q" type="search" placeholder="Name, or Scryfall syntax: t:creature c:r mv<=2" aria-label="Search cards">
     <select id="set" aria-label="Set"><option value="">All sets</option></select>
     <select id="view" aria-label="View"><option value="list">List</option><option value="grid">Grid</option></select>
   </div>
+  <p class="sub" id="qstatus" aria-live="polite"></p>
+  <fieldset id="formats" class="formats"><legend>Formats</legend></fieldset>
   <div class="grid" id="grid"></div>
   <table>
     <thead><tr><th>#</th><th>Card</th><th>Set</th><th class="hide-sm">Type</th><th class="n">Decks</th></tr></thead>
@@ -51,29 +57,69 @@
 <img id="preview" alt="">
 <script>
 const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-fetch('data/ranked.json').then(r => r.json()).then(({ total, updated, cards }) => {
-  cards.forEach((c, i) => c.rank = i + 1);
-  document.getElementById('sub').textContent =
-    `${cards.length} cards ranked by MTGTop8 non-Commander constructed decks (main or side) out of ${total.toLocaleString()}. Updated ${updated}.`;
+fetch('data/ranked.json').then(r => r.json()).then(({ formats, totals, updated, cards }) => {
+  const fmtBox = document.getElementById('formats');
+  let on = ['ST'];
+  try { on = JSON.parse(localStorage.getItem('formats')) || on; } catch {}
+  fmtBox.insertAdjacentHTML('beforeend', Object.entries(formats).map(([f, label]) =>
+    `<label><input type="checkbox" value="${f}" ${on.includes(f) ? 'checked' : ''}> ${label}</label>`).join(''));
   const setSel = document.getElementById('set');
   [...new Set(cards.map(c => c.set))].sort().forEach(s => setSel.add(new Option(s, s)));
   const q = document.getElementById('q'), tbody = document.getElementById('rows');
+  const rank = () => {
+    on = [...fmtBox.querySelectorAll('input:checked')].map(i => i.value);
+    try { localStorage.setItem('formats', JSON.stringify(on)); } catch {}
+    cards.forEach(c => c.decks = on.reduce((s, f) => s + (c.counts[f] ?? 0), 0));
+    cards.sort((a, b) => b.decks - a.decks || a.name.localeCompare(b.name));
+    cards.forEach((c, i) => c.rank = i + 1);
+    const total = on.reduce((s, f) => s + totals[f], 0);
+    document.getElementById('sub').textContent =
+      `${cards.length} cards ranked by MTGTop8 decks (main or side) out of ${total.toLocaleString()} in the checked formats. Updated ${updated}.`;
+  };
+  // Scryfall-syntax queries go to the Scryfall API, scoped to the pool; plain text filters by name locally
+  const BASE = '(e:MOR or e:ZEN or e:THS or e:DTK or e:EMN or e:DOM or e:IKO or e:VOW or e:WOE or e:BLB or e:FDN or e:FRA) -is:digital';
+  const status = document.getElementById('qstatus');
+  let match = null, seq = 0, timer;
+  const isSyntax = s => /[:<>=!()"]|(^|\s)-|\bor\b/i.test(s);
+  const scryfall = async () => {
+    const s = q.value.trim(), id = ++seq;
+    if (!isSyntax(s)) { match = null; status.textContent = ''; return render(); }
+    status.textContent = 'Searching Scryfall…';
+    const names = new Set();
+    let url = 'https://api.scryfall.com/cards/search?unique=cards&q=' + encodeURIComponent(`(${s}) ${BASE}`);
+    try {
+      while (url) {
+        const page = await (await fetch(url)).json();
+        if (id !== seq) return;
+        if (page.object === 'error') { if (page.status !== 404) throw new Error(page.details); break; }
+        page.data.forEach(c => names.add(c.name));
+        url = page.has_more && page.next_page;
+        if (url) await new Promise(r => setTimeout(r, 100));
+      }
+      match = names;
+      status.textContent = `${names.size} Scryfall matches`;
+    } catch (e) { match = null; status.textContent = 'Scryfall: ' + e.message; }
+    render();
+  };
   const render = () => {
-    const term = q.value.toLowerCase(), set = setSel.value;
-    const shown = cards.filter(c => (!set || c.set === set) && c.name.toLowerCase().includes(term));
-    const decks = c => c.decks == null ? '?' : c.decks.toLocaleString();
+    const term = isSyntax(q.value) ? '' : q.value.trim().toLowerCase(), set = setSel.value;
+    const shown = cards.filter(c => (!set || c.set === set) && (match ? match.has(c.name) : c.name.toLowerCase().includes(term)));
+    const decks = c => c.decks.toLocaleString();
     if (view.value === 'grid') {
       grid.innerHTML = shown.map(c => `<a href="${c.url}" title="${esc(c.name)}"><img loading="lazy" src="${c.img}" alt="${esc(c.name)}"><div class="cap"><span>#${c.rank}</span><span>${decks(c)} decks</span></div></a>`).join('');
       return;
     }
     tbody.innerHTML = shown
-      .map(c => `<tr><td class="n">${c.rank}</td><td><a href="${c.url}" data-img="${c.img}">${esc(c.name)}</a> <span class="r">${c.rarity}</span></td><td>${c.set}</td><td class="hide-sm">${esc(c.type)}</td><td class="n">${c.decks == null ? '?' : c.decks.toLocaleString()}</td></tr>`)
+      .map(c => `<tr><td class="n">${c.rank}</td><td><a href="${c.url}" data-img="${c.img}">${esc(c.name)}</a> <span class="r">${c.rarity}</span></td><td>${c.set}</td><td class="hide-sm">${esc(c.type)}</td><td class="n">${decks(c)}</td></tr>`)
       .join('');
   };
   const view = document.getElementById('view'), grid = document.getElementById('grid');
   try { view.value = localStorage.getItem('view') || 'list'; } catch {}
   view.onchange = () => { try { localStorage.setItem('view', view.value); } catch {} document.body.classList.toggle('grid-view', view.value === 'grid'); render(); };
-  q.oninput = setSel.onchange = render;
+  setSel.onchange = render;
+  q.oninput = () => { clearTimeout(timer); timer = setTimeout(scryfall, isSyntax(q.value) ? 500 : 0); };
+  fmtBox.onchange = () => { rank(); render(); };
+  rank();
   view.onchange();
 });
 const pv = document.getElementById('preview');
