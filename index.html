@@ -24,6 +24,12 @@
   .r { font-size:.8rem; color:var(--muted); text-transform:capitalize; }
   .hide-sm { }
   @media (max-width: 560px) { .hide-sm { display:none; } }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:12px; }
+  .grid a { display:block; color:var(--fg); }
+  .grid img { width:100%; aspect-ratio:488/680; border-radius:5%; display:block; background:var(--row); }
+  .grid .cap { display:flex; justify-content:space-between; font-size:.8rem; color:var(--muted); padding:4px 2px 0; font-variant-numeric:tabular-nums; }
+  body.grid-view table, body:not(.grid-view) .grid { display:none; }
+  body.grid-view main { max-width:1400px; }
   #preview { position:fixed; pointer-events:none; width:220px; border-radius:10px; display:none; box-shadow:0 6px 24px #0006; }
 </style>
 </head>
@@ -34,7 +40,9 @@
   <div class="controls">
     <input id="q" type="search" placeholder="Search cards" aria-label="Search cards">
     <select id="set" aria-label="Set"><option value="">All sets</option></select>
+    <select id="view" aria-label="View"><option value="list">List</option><option value="grid">Grid</option></select>
   </div>
+  <div class="grid" id="grid"></div>
   <table>
     <thead><tr><th>#</th><th>Card</th><th>Set</th><th class="hide-sm">Type</th><th class="n">Decks</th></tr></thead>
     <tbody id="rows"></tbody>
@@ -52,13 +60,21 @@ fetch('data/ranked.json').then(r => r.json()).then(({ total, updated, cards }) =
   const q = document.getElementById('q'), tbody = document.getElementById('rows');
   const render = () => {
     const term = q.value.toLowerCase(), set = setSel.value;
-    tbody.innerHTML = cards
-      .filter(c => (!set || c.set === set) && c.name.toLowerCase().includes(term))
+    const shown = cards.filter(c => (!set || c.set === set) && c.name.toLowerCase().includes(term));
+    const decks = c => c.decks == null ? '?' : c.decks.toLocaleString();
+    if (view.value === 'grid') {
+      grid.innerHTML = shown.map(c => `<a href="${c.url}" title="${esc(c.name)}"><img loading="lazy" src="${c.img}" alt="${esc(c.name)}"><div class="cap"><span>#${c.rank}</span><span>${decks(c)} decks</span></div></a>`).join('');
+      return;
+    }
+    tbody.innerHTML = shown
       .map(c => `<tr><td class="n">${c.rank}</td><td><a href="${c.url}" data-img="${c.img}">${esc(c.name)}</a> <span class="r">${c.rarity}</span></td><td>${c.set}</td><td class="hide-sm">${esc(c.type)}</td><td class="n">${c.decks == null ? '?' : c.decks.toLocaleString()}</td></tr>`)
       .join('');
   };
+  const view = document.getElementById('view'), grid = document.getElementById('grid');
+  try { view.value = localStorage.getItem('view') || 'list'; } catch {}
+  view.onchange = () => { try { localStorage.setItem('view', view.value); } catch {} document.body.classList.toggle('grid-view', view.value === 'grid'); render(); };
   q.oninput = setSel.onchange = render;
-  render();
+  view.onchange();
 });
 const pv = document.getElementById('preview');
 document.addEventListener('mouseover', e => { const a = e.target.closest('a[data-img]'); if (a && a.dataset.img) { pv.src = a.dataset.img; pv.style.display = 'block'; } });
